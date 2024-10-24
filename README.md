@@ -1,6 +1,10 @@
 # NAME
 
-App::mqtt2job - Subscribe to an MQTT topic and trigger job execution
+mqtt2job - Subscribe to an MQTT topic and trigger job execution
+
+# VERSION
+
+version 0.02
 
 # SYNOPSIS
 
@@ -19,6 +23,10 @@ initiated. The second is sent when the job has completed (or timed
 out). This second message will also include any output from the job 
 amongst various other metadata (e.g. execution datetime, duration, 
 timeout condition, etc.)
+
+# NAME
+
+App::mqtt2job - Subscribe to an MQTT topic and trigger job execution
 
 # FOR THE LOVE OF ALL THAT IS SACRED, WHY?
 
@@ -41,3 +49,14 @@ extremely bad idea and it should only ever be considered if you
 understand the potential consequences. In no event shall the 
 author be held liable for any damages arising from the use of 
 this software. It is provided for demonstration purposes only.
+
+# AUTHOR
+
+Chris Carline <chris@carline.org>
+
+# COPYRIGHT AND LICENSE
+
+This software is copyright (c) 2024 by Chris Carline.
+
+This is free software; you can redistribute it and/or modify it under
+the same terms as the Perl 5 programming language system itself.

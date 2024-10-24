@@ -3,6 +3,8 @@ package App::mqtt2job;
 use strict;
 use warnings;
 
+use Template;
+use File::Temp;
 use Exporter qw/import/;
 
 # ABSTRACT: Helper module for mqtt2job
@@ -10,9 +12,42 @@ use Exporter qw/import/;
 our @EXPORT_OK = qw/ helper_v1 ha_helper_cfg /;
 
 sub helper_v1 {
+    my ($obj) = @_;
+
+    # helper scripts need to be saved, so set up & prepare a filehandle
+    my $fh = File::Temp->new( SUFFIX => "." . ($obj->{suffix} || "pl"), UNLINK => 0 );
+    $obj->{wrapper_location} = $fh->filename;
+    
+    my $tt = Template->new();
+    my $ttout = undef;
+    
+    $tt->process( _helper_v1(), $obj, \$ttout );
+
+    return _save($fh, $ttout);
+}
+
+sub ha_helper_cfg {
+    my ($obj) = @_;
+
+    my $tt = Template->new();
+    my $ttout = undef;
+    
+    $tt->process( _ha_helper_cfg(), $obj, \$ttout );
+
+    return $ttout;
+}
+
+sub _save {
+    my ($fh, $output) = @_;
+    print STDERR "Filename: " . $fh->filename . "\n";
+    print $fh $output;
+    return $fh;
+}
+
+sub _helper_v1 {
     my $tpl = undef;
     $tpl = <<'_RUNNER_TPL';
-#![% use_perl %]
+#![% shebang %]
 
 use strict;
 use warnings;
@@ -56,7 +91,7 @@ _RUNNER_TPL
     return \$tpl;
 }
 
-sub ha_helper_cfg {
+sub _ha_helper_cfg {
     my $tpl = undef;
 $tpl = <<'_HA_CFG_TPL';
 =====================================================================

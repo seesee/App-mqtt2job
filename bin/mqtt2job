@@ -5,7 +5,6 @@ use warnings;
 use Net::MQTT::Simple;
 use JSON;
 use DateTime;
-use Template;
 use Try::Tiny;
 use File::Temp;
 use Capture::Tiny ':all';
@@ -24,7 +23,9 @@ has 'job_dir'       => (is => "rw", isa => "Str", required => 1 );
 
 # optional
 has 'mqtt_port'     => (is => "rw", isa => "Int", default => 1883  );
-has 'use_perl'      => (is => "rw", isa => "Str", default => $^X );
+has 'shebang'       => (is => "rw", isa => "Str", default => $^X );
+has 'suffix'        => (is => "rw", isa => "Str", default => "pl" );
+has 'process_name'  => (is => "rw", isa => "Str", default => "mqtt2job" );
 has 'helper_script' => (is => "rw", isa => "Str", default => "helper_v1" );
 has 'no_unlink'     => (is => "rw", isa => "Bool" );
 
@@ -34,33 +35,26 @@ has 'task'          => (is => "rw", isa => "Str", default => "unknown_task" );
 has 'cmd'           => (is => "rw", isa => "Str", default => "unknown_cmd" );
 
 # TODO 
-has 'max_velocity'  => (is => "rw", isa => "Int", default => 59  ); # limit triggers to ~once per minute
-has 'timeout'       => (is => "rw", isa => "Int", default => 30  ); # Terminate a job if it runs longer than x seconds
-has 'allowed_tpl'   => (is => "rw", isa => "Str" ); # command template (e.g. regex/string)
-has 'allowed_file'  => (is => "rw", isa => "Str" ); # file containing allowed cmds and max velocity
-has 'cert'          => (is => "rw", isa => "Str" ); # provide cert for request validity check
+#has 'max_velocity'  => (is => "rw", isa => "Int", default => 59  ); # limit triggers to ~once per minute
+#has 'timeout'       => (is => "rw", isa => "Int", default => 30  ); # Terminate a job if it runs longer than x seconds
+#has 'allowed_tpl'   => (is => "rw", isa => "Str" ); # command template (e.g. regex/string)
+#has 'allowed_file'  => (is => "rw", isa => "Str" ); # file containing allowed cmds, timeouts, and max velocities
+#has 'cert'          => (is => "rw", isa => "Str" ); # provide cert for request validity check
+#has 'cron_pattern'  => (is => "rw", isa => "Bool" ); # use cron pattern to generate ha_helper template
 
 package main;
 
 # PODNAME: mqtt2job
 # ABSTRACT: Subscribe to an MQTT topic and trigger job execution
 
-$0 = "mqtt_job_listener";
-
 my $opt = MQTT::Job::Options->new_with_options;
+$0 = $opt->process_name;
+
 my $mqtt = Net::MQTT::Simple->new($opt->mqtt_server . ":" . $opt->mqtt_port);
 
-my $helper_script = undef;
-
-if (my $cr = __PACKAGE__->can($opt->helper_script)) {
-    $helper_script = $cr->();
-} else {
-    warn("Cannot use helper script of [" . $opt->helper_script . "], falling back\n");
-    $helper_script = helper_v1();
-}
-
 my $on_exit = sub {
-    printf STDERR "\nProcess %s terminating, disconnecting from %s:%s\n", $0, $opt->mqtt_server, $opt->mqtt_port;
+    my $no_warn = shift;
+    printf STDERR "\nProcess %s terminating, disconnecting from %s:%s\n", $0, $opt->mqtt_server, $opt->mqtt_port unless $no_warn;
     $mqtt->disconnect;
     exit;
 };
@@ -70,15 +64,9 @@ $SIG{INT} = $on_exit;
 $SIG{USR1} = $on_exit;
 
 if ($opt->ha_helper) {
-    my $tt = Template->new();
-    my $ttout = undef;
-
     warn( sprintf("Did not find %s in %s directory\n", $opt->cmd, $opt->job_dir) ) unless _cmd_ok($opt->cmd);
-    
-    $tt->process( ha_helper_cfg(), { task => $opt->task, cmd => $opt->cmd, base_topic => $opt->base_topic }, \$ttout );
-    print $ttout;
-
-    $on_exit->();
+    print ha_helper_cfg({ task => $opt->task, cmd => $opt->cmd, base_topic => $opt->base_topic });
+    $on_exit->(1);
 }
 
 $mqtt->subscribe($opt->base_topic, \&_on_message);
@@ -97,26 +85,24 @@ sub _on_message {
 
     # check command and that it exists where expected
     if ($obj->{cmd} && _cmd_ok($obj->{cmd})) {
-        # create temporary filehandle to write wrapper script
-        my $fh = File::Temp->new( SUFFIX => ".pl", UNLINK => 0 );
         
         # copy options into obj array
-        foreach my $from_opt (qw/ mqtt_server mqtt_port base_topic job_dir use_perl no_unlink helper_script/) {
+        foreach my $from_opt (qw/ mqtt_server mqtt_port base_topic job_dir shebang suffix no_unlink helper_script/) {
 	        $obj->{$from_opt} = $opt->$from_opt;
 		}
-        $obj->{wrapper_location} = $fh->filename;
 
-        my $tt = Template->new();
-        
-        my $ttout = undef;
-        $tt->process( $helper_script, $obj, \$ttout );
+        my $helper_script = undef;
 
-        print STDERR "Filename: " . $fh->filename . "\n";
-        print $fh $ttout;
+        if (my $cr = __PACKAGE__->can($opt->helper_script)) {
+            $helper_script = $cr->($obj);
+        } else {
+            warn("Cannot use helper script of [" . $opt->helper_script . "], falling back\n");
+            $helper_script = helper_v1($obj);
+        }
         
         # Yee-ha!
         my ($msg, $exit) = tee_merged {
-            system($opt->use_perl, $fh->filename, "&");
+            system($opt->shebang, $helper_script, "&");
         };
 
         $msg .= ($exit == 0) ? " - ok" : " - failed";
